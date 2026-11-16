@@ -126,21 +126,24 @@ export function stageShot(name, world) {
   }
   if (name === 'intense') {
     world.reset(false);
-    // Stage the wave-five dreadnought fight: the capital ship warped in and
-    // firing, its orb rings in the air, the pilot still flying and shooting.
-    playUntil(
-      world,
-      STRONG_PILOT,
-      (state) =>
-        (state.wave >= 5 &&
-          state.enemies.some((enemy) => enemy.kind === 'dreadnought' && enemy.warp <= 0) &&
-          state.enemyBullets.length >= 8 &&
-          state.bullets.length >= 3) ||
-        state.over,
-      200,
-    );
-    // A few more steps until the frame itself is busy: a kill mid-burst.
-    playUntil(world, STRONG_PILOT, (state) => state.particles.length >= 14 || state.over, 3);
+    // Stage the wave-five dreadnought fight at its most photogenic: the
+    // capital ship near the arena's heart, an orb ring in the air, the
+    // pilot close and firing.
+    const bossBusy = (state) => {
+      const boss = state.enemies.find((enemy) => enemy.kind === 'dreadnought' && enemy.warp <= 0);
+      return (
+        boss !== undefined &&
+        Math.abs(boss.x - FIELD.width / 2) < 330 &&
+        Math.abs(boss.y - FIELD.height / 2) < 260 &&
+        Math.hypot(boss.x - state.player.x, boss.y - state.player.y) < 560 &&
+        state.enemyBullets.length >= 9 &&
+        state.bullets.length >= 3
+      );
+    };
+    playUntil(world, STRONG_PILOT, (state) => bossBusy(state) || state.over, 200);
+    // A breath more, until something is mid-explosion — but never so long
+    // that the ship sails out of the frame again.
+    playUntil(world, STRONG_PILOT, (state) => state.particles.length >= 16 || state.over, 0.5);
     return { screen: SCREEN_PLAY, best: 0, newBest: false };
   }
   if (name === 'over') {
