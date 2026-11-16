@@ -22,6 +22,8 @@ export const COLORS = {
   weaver: '#b26bff',
   dasher: '#ffd24d',
   bulwark: '#ff8a3d',
+  dreadnought: '#59ff6b',
+  enemyBullet: '#ff6ef5',
   repair: '#ff5d8f',
   overdrive: '#ffe74d',
   text: '#d9f6ff',
@@ -49,6 +51,26 @@ export const ENEMIES = {
   weaver: { radius: 12, hp: 2, speed: 132, score: 150, cost: 2 },
   dasher: { radius: 13, hp: 3, speed: 92, score: 200, cost: 3 },
   bulwark: { radius: 27, hp: 11, speed: 44, score: 400, cost: 6 },
+  dreadnought: { radius: 46, hp: 60, speed: 30, score: 2500, cost: 16 },
+};
+
+/**
+ * The dreadnought: a capital ship that closes every fifth wave. Its hull is
+ * set from the wave it arrives on; it answers with radial bullet rings and
+ * aimed spreads, and keeps launching escorts while it lives.
+ */
+export const BOSS = {
+  everyWaves: 5,
+  hpBase: 48,
+  hpPerWave: 7,
+  bulletSpeed: 262,
+  bulletRadius: 5,
+  bulletLife: 3.4,
+  radialEvery: 2.7,
+  radialCount: 14,
+  aimedEvery: 1.7,
+  spawnEvery: 6.5,
+  maxEscorts: 6,
 };
 
 /** Combo: a kill feeds the chain, the chain feeds the multiplier. */

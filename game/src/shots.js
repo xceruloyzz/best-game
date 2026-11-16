@@ -40,8 +40,20 @@ export function autopilotControl(state, pilot = STRONG_PILOT) {
     const dx = player.x - enemy.x;
     const dy = player.y - enemy.y;
     const d = Math.hypot(dx, dy) || 1;
-    if (d < pilot.evadeRadius) {
-      const weight = (1 - d / pilot.evadeRadius) * 2.4;
+    const reach = pilot.evadeRadius + enemy.radius;
+    if (d < reach) {
+      const weight = (1 - d / reach) * 2.4;
+      moveX += (dx / d) * weight;
+      moveY += (dy / d) * weight;
+    }
+  }
+  // Hostile orbs are fast and small: sidestep anything on a near course.
+  for (const orb of state.enemyBullets) {
+    const dx = player.x - orb.x;
+    const dy = player.y - orb.y;
+    const d = Math.hypot(dx, dy) || 1;
+    if (d < 150) {
+      const weight = (1 - d / 150) * 3.2;
       moveX += (dx / d) * weight;
       moveY += (dy / d) * weight;
     }

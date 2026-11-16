@@ -85,6 +85,12 @@ export function createAudio() {
         tone('sawtooth', 220, 40, 0.3, 0.2);
         noise(0.28, 0.18);
         break;
+      case 'bossdown':
+        tone('sawtooth', 160, 30, 0.7, 0.24);
+        tone('square', 90, 24, 0.8, 0.16, 0.08);
+        noise(0.6, 0.22);
+        noise(0.35, 0.16, 0.18);
+        break;
       case 'hurt':
         tone('square', 170, 65, 0.28, 0.22);
         noise(0.2, 0.14);

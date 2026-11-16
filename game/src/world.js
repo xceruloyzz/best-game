@@ -1,11 +1,12 @@
 // NEON VOID's world: the whole simulation in fixed steps — the player ship,
-// bullets, four kinds of enemy, particles, floating score text, pickups, the
-// wave director and the combo chain. It knows nothing of the DOM, the canvas
+// bullets, five kinds of enemy (the fifth a dreadnought boss with guns of
+// its own), particles, floating score text, pickups, the wave director and
+// the combo chain. It knows nothing of the DOM, the canvas
 // or sound: main feeds it a plain control object {x, y, aimX, aimY, firing}
 // each step and it answers with an event bitmask main turns into sound and
 // announcements. All chance flows from the seeded rng, so a seed replays a
 // game exactly.
-import { COLORS, COMBO, ENEMIES, FIELD, PICKUPS, PLAYER } from './config.js';
+import { BOSS, COLORS, COMBO, ENEMIES, FIELD, PICKUPS, PLAYER } from './config.js';
 
 export const EV_SHOT = 1;
 export const EV_KILL = 2;
@@ -16,6 +17,7 @@ export const EV_WAVE_START = 32;
 export const EV_WAVE_CLEAR = 64;
 export const EV_PICKUP = 128;
 export const EV_DASH = 256;
+export const EV_BOSS_DOWN = 512;
 
 /** How long a spawning enemy is a harmless warp ghost, seconds. */
 const WARP_SECONDS = 0.6;
@@ -31,6 +33,20 @@ const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
 /** The wave's shopping list: kinds bought from a points budget that grows per wave. */
 function buildWaveQueue(rng, wave) {
+  // Every fifth wave is a dreadnought wave: the capital ship warps in first
+  // and a thin escort screen is bought with what budget remains.
+  if (wave % BOSS.everyWaves === 0) {
+    let budget = 6 + wave * 4 - ENEMIES.dreadnought.cost;
+    const escorts = ['chaser', 'chaser', 'weaver'];
+    const queue = ['dreadnought'];
+    while (budget >= ENEMIES.chaser.cost) {
+      const affordable = escorts.filter((kind) => ENEMIES[kind].cost <= budget);
+      const kind = rng.pick(affordable);
+      queue.push(kind);
+      budget -= ENEMIES[kind].cost;
+    }
+    return queue;
+  }
   let budget = 6 + wave * 4;
   const kinds = ['chaser'];
   if (wave >= 2) kinds.push('weaver', 'weaver');
@@ -97,11 +113,14 @@ export function createWorld(rng) {
     spawnTimer: 0,
     player: null,
     bullets: [],
+    enemyBullets: [],
     enemies: [],
     particles: [],
     floaters: [],
     pickups: [],
     stars: [],
+    nebulae: [],
+    bossesDown: 0,
   };
 
   function burst(x, y, color, count, speed, size = 3) {
@@ -119,8 +138,47 @@ export function createWorld(rng) {
         size: rng.range(size * 0.5, size * 1.4),
         color,
         drag: 2.6,
+        kind: 'dot',
+        grow: 0,
       });
     }
+    // A third of the burst leaves as sparks: fast streaks that outrun the dots.
+    const sparks = Math.floor(count / 3);
+    for (let i = 0; i < sparks; i += 1) {
+      const angle = rng.range(0, Math.PI * 2);
+      const v = rng.range(speed * 0.9, speed * 1.7);
+      const life = rng.range(0.18, 0.42);
+      state.particles.push({
+        x,
+        y,
+        vx: Math.cos(angle) * v,
+        vy: Math.sin(angle) * v,
+        life,
+        maxLife: life,
+        size: rng.range(1.2, 2.2),
+        color,
+        drag: 1.4,
+        kind: 'spark',
+        grow: 0,
+      });
+    }
+  }
+
+  /** An expanding shockwave ring, the visible punch of a heavy death. */
+  function ring(x, y, color, maxRadius) {
+    state.particles.push({
+      x,
+      y,
+      vx: 0,
+      vy: 0,
+      life: 0.55,
+      maxLife: 0.55,
+      size: maxRadius,
+      color,
+      drag: 0,
+      kind: 'ring',
+      grow: 0,
+    });
   }
 
   function floater(x, y, text, color, size = 17) {
@@ -132,7 +190,7 @@ export function createWorld(rng) {
     state.spawnQueue = buildWaveQueue(rng, wave);
     state.spawnTimer = 0.4;
     state.phase = 'combat';
-    state.banner = `WAVE ${wave}`;
+    state.banner = wave % BOSS.everyWaves === 0 ? '⚠ DREADNOUGHT ⚠' : `WAVE ${wave}`;
     state.bannerTimer = 1.7;
   }
 
@@ -149,10 +207,12 @@ export function createWorld(rng) {
     state.shake = 0;
     state.hurtFlash = 0;
     state.bullets = [];
+    state.enemyBullets = [];
     state.enemies = [];
     state.particles = [];
     state.floaters = [];
     state.pickups = [];
+    state.bossesDown = 0;
     state.player = {
       x: FIELD.width / 2,
       y: FIELD.height / 2,
@@ -173,6 +233,19 @@ export function createWorld(rng) {
         phase: rng.range(0, Math.PI * 2),
       });
     }
+    // The nebula layer: a handful of vast soft clouds seeded with the world,
+    // so every seed's sky is its own and a replay shows the same one.
+    state.nebulae = [];
+    for (let i = 0; i < 5; i += 1) {
+      state.nebulae.push({
+        x: rng.range(0, FIELD.width),
+        y: rng.range(0, FIELD.height),
+        r: rng.range(280, 540),
+        hue: i % 3,
+        phase: rng.range(0, Math.PI * 2),
+        drift: rng.range(1.5, 4),
+      });
+    }
     startWave(1);
   }
 
@@ -180,14 +253,15 @@ export function createWorld(rng) {
     const spec = ENEMIES[kind];
     const point = spawnPoint(rng, state.player);
     const hpBonus = kind === 'chaser' || kind === 'weaver' ? Math.floor((state.wave - 1) / 5) : 0;
+    const hp = kind === 'dreadnought' ? BOSS.hpBase + state.wave * BOSS.hpPerWave : spec.hp + hpBonus;
     state.enemies.push({
       kind,
       x: point.x,
       y: point.y,
       vx: 0,
       vy: 0,
-      hp: spec.hp + hpBonus,
-      maxHp: spec.hp + hpBonus,
+      hp,
+      maxHp: hp,
       radius: spec.radius,
       age: 0,
       warp: WARP_SECONDS,
@@ -198,19 +272,41 @@ export function createWorld(rng) {
       dashX: 0,
       dashY: 0,
       angle: 0,
+      radialTimer: BOSS.radialEvery * 0.6,
+      aimedTimer: BOSS.aimedEvery,
+      escortTimer: BOSS.spawnEvery,
     });
   }
 
   function killEnemy(enemy, events) {
     const spec = ENEMIES[enemy.kind];
-    burst(enemy.x, enemy.y, COLORS[enemy.kind], enemy.kind === 'bulwark' ? 30 : 16, 300, enemy.kind === 'bulwark' ? 4 : 3);
-    state.shake = Math.min(16, state.shake + (enemy.kind === 'bulwark' ? 7 : 2.5));
+    if (enemy.kind === 'dreadnought') {
+      // The capital ship dies in stages of light: layered bursts, twin
+      // shockwaves and a shake the whole arena feels.
+      burst(enemy.x, enemy.y, COLORS.dreadnought, 46, 380, 4.5);
+      burst(enemy.x, enemy.y, COLORS.enemyBullet, 22, 300, 3.5);
+      burst(enemy.x, enemy.y, '#ffffff', 14, 220, 3);
+      ring(enemy.x, enemy.y, COLORS.dreadnought, 190);
+      ring(enemy.x, enemy.y, COLORS.enemyBullet, 120);
+      state.shake = 22;
+      events |= EV_BOSS_DOWN;
+      if (!state.demo) {
+        state.bossesDown += 1;
+        // A capital ship always leaves both cells in its wreck.
+        state.pickups.push({ kind: 'repair', x: enemy.x - 26, y: enemy.y, vx: -36, vy: 12, age: 0, life: PICKUPS.lifeSeconds });
+        state.pickups.push({ kind: 'overdrive', x: enemy.x + 26, y: enemy.y, vx: 36, vy: -12, age: 0, life: PICKUPS.lifeSeconds });
+      }
+    } else {
+      burst(enemy.x, enemy.y, COLORS[enemy.kind], enemy.kind === 'bulwark' ? 30 : 16, 300, enemy.kind === 'bulwark' ? 4 : 3);
+      if (enemy.kind === 'bulwark') ring(enemy.x, enemy.y, COLORS.bulwark, 95);
+      state.shake = Math.min(16, state.shake + (enemy.kind === 'bulwark' ? 7 : 2.5));
+    }
     if (enemy.kind === 'bulwark') {
       events |= EV_SPLIT;
       for (let i = 0; i < 2; i += 1) {
         spawnEnemyNear('chaser', enemy.x + (i === 0 ? -22 : 22), enemy.y + (i === 0 ? -10 : 14));
       }
-    } else {
+    } else if (enemy.kind !== 'dreadnought') {
       events |= EV_KILL;
     }
     if (state.demo) return events;
@@ -222,7 +318,7 @@ export function createWorld(rng) {
     const points = spec.score * multiplier;
     state.score += points;
     floater(enemy.x, enemy.y - 10, multiplier > 1 ? `+${points} x${multiplier}` : `+${points}`, COLORS[enemy.kind]);
-    if (rng.chance(PICKUPS.dropChance)) {
+    if (enemy.kind !== 'dreadnought' && rng.chance(PICKUPS.dropChance)) {
       const kind = state.hearts < PLAYER.hearts && rng.chance(0.45) ? 'repair' : 'overdrive';
       state.pickups.push({ kind, x: enemy.x, y: enemy.y, vx: rng.range(-30, 30), vy: rng.range(-30, 30), age: 0, life: PICKUPS.lifeSeconds });
     }
@@ -249,12 +345,15 @@ export function createWorld(rng) {
       dashX: 0,
       dashY: 0,
       angle: 0,
+      radialTimer: 0,
+      aimedTimer: 0,
+      escortTimer: 0,
     });
   }
 
-  function hurtPlayer(enemy) {
+  function damagePlayer(x, y, color) {
     let events = EV_HURT;
-    burst(enemy.x, enemy.y, COLORS[enemy.kind], 16, 300);
+    burst(x, y, color, 16, 300);
     if (state.demo) return events;
     state.hearts -= 1;
     state.combo = 0;
@@ -273,6 +372,10 @@ export function createWorld(rng) {
       events |= EV_OVER;
     }
     return events;
+  }
+
+  function hurtPlayer(enemy) {
+    return damagePlayer(enemy.x, enemy.y, COLORS[enemy.kind]);
   }
 
   function stepPlayer(dt, control) {
@@ -312,6 +415,8 @@ export function createWorld(rng) {
         size: rng.range(1.6, 3.2),
         color: COLORS.player,
         drag: 1.2,
+        kind: 'dot',
+        grow: 0,
       });
     }
     if (control.firing && player.fireTimer <= 0) {
@@ -329,6 +434,17 @@ export function createWorld(rng) {
       events |= EV_SHOT;
     }
     return events;
+  }
+
+  /** One hostile orb from a dreadnought gun, on a straight fixed course. */
+  function fireEnemyBullet(x, y, angle) {
+    state.enemyBullets.push({
+      x,
+      y,
+      vx: Math.cos(angle) * BOSS.bulletSpeed,
+      vy: Math.sin(angle) * BOSS.bulletSpeed,
+      life: BOSS.bulletLife,
+    });
   }
 
   function stepEnemies(dt) {
@@ -391,11 +507,47 @@ export function createWorld(rng) {
           enemy.vy *= 0.9;
           if (enemy.modeTimer <= 0) enemy.mode = 'stalk';
         }
-      } else {
-        // bulwark
+      } else if (enemy.kind === 'bulwark') {
         enemy.vx = ux * spec.speed * speedScale;
         enemy.vy = uy * spec.speed * speedScale;
         enemy.angle += dt * 0.5;
+      } else {
+        // dreadnought: it does not chase. It takes a slow orbit of the arena
+        // centre, turns its guns on the player, and keeps the sky busy.
+        const anchorX = FIELD.width / 2 + Math.cos(state.time * 0.11 + enemy.phase) * 300;
+        const anchorY = FIELD.height / 2 + Math.sin(state.time * 0.083 + enemy.phase) * 165;
+        const adx = anchorX - enemy.x;
+        const ady = anchorY - enemy.y;
+        const adist = Math.hypot(adx, ady) || 1;
+        const thrust = Math.min(1, adist / 60);
+        enemy.vx = (adx / adist) * spec.speed * thrust;
+        enemy.vy = (ady / adist) * spec.speed * thrust;
+        enemy.angle += dt * 0.35;
+        if (player.alive) {
+          enemy.radialTimer -= dt;
+          if (enemy.radialTimer <= 0) {
+            enemy.radialTimer = BOSS.radialEvery;
+            const offset = enemy.age * 0.7;
+            for (let i = 0; i < BOSS.radialCount; i += 1) {
+              const a = offset + (i / BOSS.radialCount) * Math.PI * 2;
+              fireEnemyBullet(enemy.x, enemy.y, a);
+            }
+          }
+          enemy.aimedTimer -= dt;
+          if (enemy.aimedTimer <= 0) {
+            enemy.aimedTimer = BOSS.aimedEvery;
+            const base = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+            for (const spread of [-0.17, 0, 0.17]) fireEnemyBullet(enemy.x, enemy.y, base + spread);
+          }
+          enemy.escortTimer -= dt;
+          if (enemy.escortTimer <= 0) {
+            enemy.escortTimer = BOSS.spawnEvery;
+            const escorts = state.enemies.filter((other) => other.kind !== 'dreadnought').length;
+            if (escorts < BOSS.maxEscorts) {
+              spawnEnemyNear(rng.chance(0.4) ? 'weaver' : 'chaser', enemy.x + rng.range(-70, 70), enemy.y + rng.range(-70, 70));
+            }
+          }
+        }
       }
       enemy.x = clamp(enemy.x + enemy.vx * dt, enemy.radius, FIELD.width - enemy.radius);
       enemy.y = clamp(enemy.y + enemy.vy * dt, enemy.radius, FIELD.height - enemy.radius);
@@ -411,10 +563,15 @@ export function createWorld(rng) {
         const min = a.radius + b.radius + 2;
         if (dist > 0.01 && dist < min) {
           const push = ((min - dist) / dist) * 0.5;
-          a.x -= dx * push * 0.5;
-          a.y -= dy * push * 0.5;
-          b.x += dx * push * 0.5;
-          b.y += dy * push * 0.5;
+          // The dreadnought does not get shoved: all the give is the other's.
+          if (a.kind !== 'dreadnought') {
+            a.x -= dx * push * 0.5;
+            a.y -= dy * push * 0.5;
+          }
+          if (b.kind !== 'dreadnought') {
+            b.x += dx * push * 0.5;
+            b.y += dy * push * 0.5;
+          }
         }
       }
     }
@@ -433,8 +590,10 @@ export function createWorld(rng) {
           bullet.life = 0;
           enemy.hp -= 1;
           enemy.flash = 1;
-          enemy.x += bullet.vx * 0.006;
-          enemy.y += bullet.vy * 0.006;
+          if (enemy.kind !== 'dreadnought') {
+            enemy.x += bullet.vx * 0.006;
+            enemy.y += bullet.vy * 0.006;
+          }
           burst(bullet.x, bullet.y, COLORS.bullet, 3, 170, 2);
           break;
         }
@@ -445,12 +604,29 @@ export function createWorld(rng) {
       for (const enemy of state.enemies) {
         if (enemy.hp <= 0 || enemy.warp > 0) continue;
         if (Math.hypot(enemy.x - player.x, enemy.y - player.y) < enemy.radius + PLAYER.radius - 2) {
-          enemy.hp = 0;
+          // Everything that touches the hull dies on it — except the
+          // dreadnought, which is far too much ship to die on a ship.
+          if (enemy.kind !== 'dreadnought') enemy.hp = 0;
           if (state.demo || player.invulnTimer <= 0) {
             events |= hurtPlayer(enemy);
             if (!player.alive) break;
           } else {
             burst(enemy.x, enemy.y, COLORS[enemy.kind], 12, 260);
+          }
+        }
+      }
+    }
+    // Hostile orbs against the player.
+    if (player.alive) {
+      for (const orb of state.enemyBullets) {
+        if (orb.life <= 0) continue;
+        if (Math.hypot(orb.x - player.x, orb.y - player.y) < BOSS.bulletRadius + PLAYER.radius - 2) {
+          orb.life = 0;
+          if (!state.demo && player.invulnTimer <= 0) {
+            events |= damagePlayer(orb.x, orb.y, COLORS.enemyBullet);
+            if (!player.alive) break;
+          } else {
+            burst(orb.x, orb.y, COLORS.enemyBullet, 8, 200, 2.5);
           }
         }
       }
@@ -543,6 +719,13 @@ export function createWorld(rng) {
       if (bullet.x < -20 || bullet.x > FIELD.width + 20 || bullet.y < -20 || bullet.y > FIELD.height + 20) bullet.life = 0;
     }
     state.bullets = state.bullets.filter((bullet) => bullet.life > 0);
+    for (const orb of state.enemyBullets) {
+      orb.x += orb.vx * dt;
+      orb.y += orb.vy * dt;
+      orb.life -= dt;
+      if (orb.x < -20 || orb.x > FIELD.width + 20 || orb.y < -20 || orb.y > FIELD.height + 20) orb.life = 0;
+    }
+    state.enemyBullets = state.enemyBullets.filter((orb) => orb.life > 0);
     for (const particle of state.particles) {
       particle.x += particle.vx * dt;
       particle.y += particle.vy * dt;

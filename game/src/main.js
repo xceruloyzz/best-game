@@ -11,6 +11,7 @@ import { BEST_KEY, STEP } from './config.js';
 import { createRandom } from './random.js';
 import {
   createWorld,
+  EV_BOSS_DOWN,
   EV_DASH,
   EV_HURT,
   EV_KILL,
@@ -108,6 +109,10 @@ function runGame() {
     if (events & EV_SHOT) audio.play('shoot');
     if (events & EV_KILL) audio.play('kill');
     if (events & EV_SPLIT) audio.play('split');
+    if (events & EV_BOSS_DOWN) {
+      audio.play('bossdown');
+      announce('Dreadnought destroyed.');
+    }
     if (events & EV_DASH) audio.play('dash');
     if (events & EV_PICKUP) audio.play('pickup');
     if (events & EV_WAVE_START) audio.play('wave');
