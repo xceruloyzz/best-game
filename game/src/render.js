@@ -1,11 +1,12 @@
 // NEON VOID's renderer: everything the player sees, drawn on a 2D canvas in
-// arena coordinates through the letterbox transform. Background starfield and
-// grid, pickups, the four enemy kinds as distinct glowing shapes, bullets,
-// particles, floating text, the HUD, and the title, pause and game-over
-// screens. It reads the world state and nothing else, and never calls
+// arena coordinates through the letterbox transform. Nebula clouds and a
+// starfield over the grid, pickups, the five enemy kinds as distinct glowing
+// shapes, bullets and hostile orbs, shockwaves, sparks and particles,
+// floating text, the HUD with its dreadnought bar, and the title, pause and
+// game-over screens. It reads the world state and nothing else, and never calls
 // Math.random: shake and twinkle are functions of the world's clock, so a
 // staged frame is the same frame every time.
-import { COLORS, COMBO, FIELD, PLAYER, computeView } from './config.js';
+import { BOSS, COLORS, COMBO, FIELD, PLAYER, computeView } from './config.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -83,6 +84,22 @@ export function createRenderer(canvas) {
     glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
     ctx.fillStyle = glow;
     ctx.fillRect(0, 0, FIELD.width, FIELD.height);
+    // Nebula clouds: vast soft colour drifting almost imperceptibly, seeded
+    // with the world, so a seed's sky is always the same sky.
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const tints = ['124, 58, 237', '13, 148, 190', '219, 39, 119'];
+    for (const neb of state.nebulae) {
+      const cx = neb.x + Math.sin(state.time * 0.021 * neb.drift + neb.phase) * 26;
+      const cy = neb.y + Math.cos(state.time * 0.017 * neb.drift + neb.phase) * 20;
+      const pulse = 0.085 + 0.035 * (0.5 + 0.5 * Math.sin(state.time * 0.11 + neb.phase * 2));
+      const cloud = ctx.createRadialGradient(cx, cy, 0, cx, cy, neb.r);
+      cloud.addColorStop(0, `rgba(${tints[neb.hue]}, ${pulse})`);
+      cloud.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = cloud;
+      ctx.fillRect(cx - neb.r, cy - neb.r, neb.r * 2, neb.r * 2);
+    }
+    ctx.restore();
     ctx.strokeStyle = COLORS.grid;
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -102,12 +119,30 @@ export function createRenderer(canvas) {
       ctx.fillStyle = '#bfe9ff';
       const r = star.z * 1.7;
       ctx.fillRect(star.x - r / 2, star.y - r / 2, r, r);
+      // The nearest stars carry a cross sparkle.
+      if (star.z > 0.82) {
+        const s = 2.5 + star.z * 3.2 * twinkle;
+        ctx.strokeStyle = '#dff6ff';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(star.x - s, star.y);
+        ctx.lineTo(star.x + s, star.y);
+        ctx.moveTo(star.x, star.y - s);
+        ctx.lineTo(star.x, star.y + s);
+        ctx.stroke();
+      }
     }
     ctx.globalAlpha = 1;
     // The arena rim.
     ctx.strokeStyle = 'rgba(90, 200, 255, 0.35)';
     ctx.lineWidth = 2;
     ctx.strokeRect(1, 1, FIELD.width - 2, FIELD.height - 2);
+    // A vignette to seat the arena in the dark around it.
+    const vignette = ctx.createRadialGradient(FIELD.width / 2, FIELD.height / 2, 330, FIELD.width / 2, FIELD.height / 2, 790);
+    vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    vignette.addColorStop(1, 'rgba(0, 0, 0, 0.30)');
+    ctx.fillStyle = vignette;
+    ctx.fillRect(0, 0, FIELD.width, FIELD.height);
     ctx.restore();
   }
 
@@ -219,6 +254,45 @@ export function createRenderer(canvas) {
       ctx.beginPath();
       ctx.arc(0, 0, 3, 0, Math.PI * 2);
       ctx.fill();
+    } else if (enemy.kind === 'dreadnought') {
+      // The capital ship: counter-rotating hex plates over a dark hull, a
+      // dashed targeting ring, gun blisters at the rim, and a core that
+      // burns white as the hull fails.
+      ctx.shadowBlur = 24;
+      polygon(ctx, 0, 0, enemy.radius, 6, enemy.angle);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.setLineDash([10, 9]);
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = 0.55;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(0, 0, enemy.radius + 9, -enemy.angle * 0.7, -enemy.angle * 0.7 + Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#04160a';
+      polygon(ctx, 0, 0, enemy.radius * 0.76, 6, -enemy.angle * 1.35);
+      ctx.fill();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      polygon(ctx, 0, 0, enemy.radius * 0.76, 6, -enemy.angle * 1.35);
+      ctx.stroke();
+      for (let i = 0; i < 6; i += 1) {
+        const a = enemy.angle + (i / 6) * Math.PI * 2;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(Math.cos(a) * enemy.radius * 0.58, Math.sin(a) * enemy.radius * 0.58, 4.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      const corePulse = 8.6 + Math.sin(state.time * 5.2) * 1.3;
+      ctx.fillStyle = flash ? '#ffffff' : '#eaffea';
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 18;
+      ctx.beginPath();
+      ctx.arc(0, 0, corePulse, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
     } else {
       // bulwark: a heavy rotating hexagon with a bright core and a hull ring.
       polygon(ctx, 0, 0, enemy.radius, 6, enemy.angle);
@@ -235,7 +309,7 @@ export function createRenderer(canvas) {
     }
     ctx.restore();
     // A hull sliver for the kinds tough enough to need one.
-    if (enemy.hp < enemy.maxHp && (enemy.kind === 'bulwark' || enemy.kind === 'dasher')) {
+    if (enemy.hp < enemy.maxHp && (enemy.kind === 'bulwark' || enemy.kind === 'dasher' || enemy.kind === 'dreadnought')) {
       const w = enemy.radius * 2;
       ctx.fillStyle = 'rgba(255,255,255,0.22)';
       ctx.fillRect(enemy.x - enemy.radius, enemy.y - enemy.radius - 11, w, 3.5);
@@ -317,6 +391,27 @@ export function createRenderer(canvas) {
     // Bullets and particles burn additive, over everything that moves.
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
+    // Hostile orbs: magenta fire with a hot core and a short comet tail.
+    for (const orb of state.enemyBullets) {
+      const pulse = 1 + Math.sin(state.time * 12 + orb.life * 3) * 0.16;
+      ctx.strokeStyle = 'rgba(255, 110, 245, 0.4)';
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(orb.x - orb.vx * 0.03, orb.y - orb.vy * 0.03);
+      ctx.lineTo(orb.x, orb.y);
+      ctx.stroke();
+      ctx.fillStyle = COLORS.enemyBullet;
+      ctx.shadowColor = COLORS.enemyBullet;
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(orb.x, orb.y, BOSS.bulletRadius * pulse, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#fff0fe';
+      ctx.beginPath();
+      ctx.arc(orb.x, orb.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
     for (const bullet of state.bullets) {
       ctx.strokeStyle = 'rgba(120, 230, 255, 0.45)';
       ctx.lineWidth = 2.4;
@@ -334,11 +429,29 @@ export function createRenderer(canvas) {
     ctx.shadowBlur = 0;
     for (const particle of state.particles) {
       const t = particle.life / particle.maxLife;
-      ctx.globalAlpha = t;
-      ctx.fillStyle = particle.color;
-      ctx.beginPath();
-      ctx.arc(particle.x, particle.y, particle.size * (0.4 + t * 0.6), 0, Math.PI * 2);
-      ctx.fill();
+      if (particle.kind === 'ring') {
+        // A shockwave: born at a point, gone at full stretch.
+        ctx.globalAlpha = t * 0.85;
+        ctx.strokeStyle = particle.color;
+        ctx.lineWidth = 1 + 3.5 * t;
+        ctx.beginPath();
+        ctx.arc(particle.x, particle.y, particle.size * (1 - t), 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (particle.kind === 'spark') {
+        ctx.globalAlpha = t;
+        ctx.strokeStyle = particle.color;
+        ctx.lineWidth = particle.size;
+        ctx.beginPath();
+        ctx.moveTo(particle.x - particle.vx * 0.035, particle.y - particle.vy * 0.035);
+        ctx.lineTo(particle.x, particle.y);
+        ctx.stroke();
+      } else {
+        ctx.globalAlpha = t;
+        ctx.fillStyle = particle.color;
+        ctx.beginPath();
+        ctx.arc(particle.x, particle.y, particle.size * (0.4 + t * 0.6), 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
     ctx.restore();
     ctx.globalAlpha = 1;
@@ -415,6 +528,23 @@ export function createRenderer(canvas) {
     ctx.font = '600 13px system-ui, "Segoe UI", sans-serif';
     const hostiles = state.enemies.length + state.spawnQueue.length;
     ctx.fillText(`HOSTILES ${hostiles}`, FIELD.width - 20, 86);
+    // While the dreadnought lives, its hull is the arena's headline.
+    const boss = state.enemies.find((enemy) => enemy.kind === 'dreadnought');
+    if (boss) {
+      const barWidth = 360;
+      const barX = FIELD.width / 2 - barWidth / 2;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = COLORS.dreadnought;
+      ctx.font = '700 13px system-ui, "Segoe UI", sans-serif';
+      ctx.shadowColor = COLORS.dreadnought;
+      ctx.shadowBlur = 8;
+      ctx.fillText('☠  D R E A D N O U G H T  ☠', FIELD.width / 2, 34);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(89, 255, 107, 0.18)';
+      ctx.fillRect(barX, 42, barWidth, 7);
+      ctx.fillStyle = COLORS.dreadnought;
+      ctx.fillRect(barX, 42, barWidth * Math.max(0, boss.hp / boss.maxHp), 7);
+    }
     // Controls, a whisper at the bottom.
     ctx.textAlign = 'center';
     ctx.globalAlpha = 0.5;
@@ -457,17 +587,77 @@ export function createRenderer(canvas) {
     ctx.restore();
   }
 
+  /** The five hunter kinds, standing in a row on the title screen as a warning. */
+  function drawShowcase(state) {
+    ctx.save();
+    ctx.translate(view.ox, view.oy);
+    ctx.scale(view.scale, view.scale);
+    const kinds = [
+      ['chaser', 'CHASER'],
+      ['weaver', 'WEAVER'],
+      ['dasher', 'DASHER'],
+      ['bulwark', 'BULWARK'],
+      ['dreadnought', 'DREADNOUGHT'],
+    ];
+    kinds.forEach(([kind, label], i) => {
+      const fake = {
+        kind,
+        x: 232 + i * 204,
+        y: 664,
+        vx: 0,
+        vy: 0,
+        hp: 1,
+        maxHp: 1,
+        radius: kind === 'dreadnought' ? 40 : kind === 'bulwark' ? 27 : 15,
+        age: 0,
+        warp: 0,
+        flash: 0,
+        phase: 0,
+        mode: 'stalk',
+        modeTimer: 0,
+        dashX: 0,
+        dashY: 0,
+        angle: state.time * 0.6 + i,
+      };
+      drawEnemy(fake, state);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = COLORS.dim;
+      ctx.font = '600 11.5px system-ui, "Segoe UI", sans-serif';
+      ctx.fillText(label, fake.x, 664 + fake.radius + 24);
+    });
+    ctx.restore();
+  }
+
   function drawTitle(state, best) {
     dim(0.52);
+    // Two slow rings turning behind the name, like a station waking up.
+    ctx.save();
+    ctx.translate(view.ox, view.oy);
+    ctx.scale(view.scale, view.scale);
+    ctx.strokeStyle = 'rgba(77, 243, 255, 0.16)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([26, 18]);
+    ctx.lineDashOffset = -state.time * 14;
+    ctx.beginPath();
+    ctx.arc(FIELD.width / 2, 252, 178, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(178, 107, 255, 0.13)';
+    ctx.lineDashOffset = state.time * 9;
+    ctx.beginPath();
+    ctx.arc(FIELD.width / 2, 252, 216, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
     centred('NEON VOID', 268, '900 104px system-ui, "Segoe UI", sans-serif', COLORS.player, 36);
     centred('A R E N A   S U R V I V A L', 312, '600 21px system-ui, "Segoe UI", sans-serif', COLORS.text);
-    centred('Four kinds of hunter are coming through the dark. Chain your kills, raise the combo,', 386, '500 17px system-ui, "Segoe UI", sans-serif', COLORS.dim);
-    centred('and do not let them touch your hull.', 410, '500 17px system-ui, "Segoe UI", sans-serif', COLORS.dim);
+    centred('Five kinds of hunter are coming through the dark. Chain your kills, raise the combo,', 386, '500 17px system-ui, "Segoe UI", sans-serif', COLORS.dim);
+    centred('mind the Dreadnought every fifth wave, and do not let them touch your hull.', 410, '500 17px system-ui, "Segoe UI", sans-serif', COLORS.dim);
     centred('WASD / ARROWS — move        MOUSE — aim        HOLD CLICK / SPACE — fire', 462, '700 16px system-ui, "Segoe UI", sans-serif', COLORS.text);
     centred('P — pause        M — sound on/off', 488, '500 14px system-ui, "Segoe UI", sans-serif', COLORS.dim);
     if (best > 0) centred(`BEST  ${formatScore(best)}`, 540, '800 20px system-ui, "Segoe UI", sans-serif', COLORS.overdrive);
     const pulse = 0.65 + 0.35 * Math.sin(state.time * 3.4);
-    centred('CLICK OR PRESS ENTER TO START', 606, '800 24px system-ui, "Segoe UI", sans-serif', COLORS.playerCore, 16, pulse);
+    centred('CLICK OR PRESS ENTER TO START', 584, '800 24px system-ui, "Segoe UI", sans-serif', COLORS.playerCore, 16, pulse);
+    drawShowcase(state);
   }
 
   function drawPaused() {
@@ -480,7 +670,7 @@ export function createRenderer(canvas) {
     dim(0.6);
     centred('GAME OVER', 250, '900 84px system-ui, "Segoe UI", sans-serif', COLORS.danger, 32);
     centred(`SCORE  ${formatScore(state.score)}`, 348, '800 44px system-ui, "Segoe UI", sans-serif', COLORS.text, 14);
-    centred(`Wave reached ${state.wave} · ${state.kills} kills · best chain ${state.bestCombo}`, 396, '600 18px system-ui, "Segoe UI", sans-serif', COLORS.dim);
+    centred(`Wave reached ${state.wave} · ${state.kills} kills · best chain ${state.bestCombo}${state.bossesDown > 0 ? ` · ${state.bossesDown} dreadnought${state.bossesDown > 1 ? 's' : ''} downed` : ''}`, 396, '600 18px system-ui, "Segoe UI", sans-serif', COLORS.dim);
     if (meta.newBest && state.score > 0) {
       centred('★ NEW BEST ★', 448, '800 24px system-ui, "Segoe UI", sans-serif', COLORS.overdrive, 16);
     } else if (best > 0) {

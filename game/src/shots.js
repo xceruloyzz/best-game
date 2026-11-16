@@ -126,11 +126,18 @@ export function stageShot(name, world) {
   }
   if (name === 'intense') {
     world.reset(false);
+    // Stage the wave-five dreadnought fight: the capital ship warped in and
+    // firing, its orb rings in the air, the pilot still flying and shooting.
     playUntil(
       world,
       STRONG_PILOT,
-      (state) => (state.wave >= 4 && state.enemies.length >= 7) || state.over,
-      95,
+      (state) =>
+        (state.wave >= 5 &&
+          state.enemies.some((enemy) => enemy.kind === 'dreadnought' && enemy.warp <= 0) &&
+          state.enemyBullets.length >= 8 &&
+          state.bullets.length >= 3) ||
+        state.over,
+      200,
     );
     // A few more steps until the frame itself is busy: a kill mid-burst.
     playUntil(world, STRONG_PILOT, (state) => state.particles.length >= 14 || state.over, 3);
