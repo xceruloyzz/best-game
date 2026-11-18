@@ -1,12 +1,13 @@
-// NEON VOID's world: the whole simulation in fixed steps — the player ship,
-// bullets, five kinds of enemy (the fifth a dreadnought boss with guns of
-// its own), particles, floating score text, pickups, the wave director and
+// NEON VOID's world: the whole simulation in fixed steps — the player ship
+// (tri-spread cannon plus a piercing laser lance), bullets, six kinds of
+// enemy (the fifth a dreadnought boss with guns of its own, the sixth an
+// orbiter gun-skiff that strafes and shoots), particles, floating score text, pickups, the wave director and
 // the combo chain. It knows nothing of the DOM, the canvas
 // or sound: main feeds it a plain control object {x, y, aimX, aimY, firing}
 // each step and it answers with an event bitmask main turns into sound and
 // announcements. All chance flows from the seeded rng, so a seed replays a
 // game exactly.
-import { BOSS, COLORS, COMBO, ENEMIES, FIELD, PICKUPS, PLAYER } from './config.js';
+import { BOSS, COLORS, COMBO, ENEMIES, FIELD, ORBITER, PICKUPS, PLAYER, WEAPONS } from './config.js';
 
 export const EV_SHOT = 1;
 export const EV_KILL = 2;
@@ -37,7 +38,7 @@ function buildWaveQueue(rng, wave) {
   // and a thin escort screen is bought with what budget remains.
   if (wave % BOSS.everyWaves === 0) {
     let budget = 6 + wave * 4 - ENEMIES.dreadnought.cost;
-    const escorts = ['chaser', 'chaser', 'weaver'];
+    const escorts = ['chaser', 'chaser', 'weaver', 'orbiter'];
     const queue = ['dreadnought'];
     while (budget >= ENEMIES.chaser.cost) {
       const affordable = escorts.filter((kind) => ENEMIES[kind].cost <= budget);
@@ -49,8 +50,8 @@ function buildWaveQueue(rng, wave) {
   }
   let budget = 6 + wave * 4;
   const kinds = ['chaser'];
-  if (wave >= 2) kinds.push('weaver', 'weaver');
-  if (wave >= 3) kinds.push('dasher');
+  if (wave >= 2) kinds.push('weaver', 'weaver', 'orbiter');
+  if (wave >= 3) kinds.push('dasher', 'orbiter');
   if (wave >= 4) kinds.push('bulwark');
   kinds.push('chaser', 'chaser');
   const queue = [];
@@ -119,7 +120,11 @@ export function createWorld(rng) {
     floaters: [],
     pickups: [],
     stars: [],
+    farStars: [],
+    dust: [],
     nebulae: [],
+    nextEnemyId: 1,
+    nextBulletId: 1,
     bossesDown: 0,
   };
 
@@ -181,6 +186,13 @@ export function createWorld(rng) {
     });
   }
 
+  /** A white-hot flash disc: the first instant of an explosion, before the sparks. */
+  function flash(x, y, color, size) {
+    state.particles.push({
+      x, y, vx: 0, vy: 0, life: 0.16, maxLife: 0.16, size, color, drag: 0, kind: 'flash', grow: 0,
+    });
+  }
+
   function floater(x, y, text, color, size = 17) {
     state.floaters.push({ x, y, vy: -46, life: 1.1, maxLife: 1.1, text, color, size });
   }
@@ -220,6 +232,7 @@ export function createWorld(rng) {
       vy: 0,
       angle: -Math.PI / 2,
       fireTimer: 0,
+      shotCounter: 0,
       invulnTimer: 0,
       overdriveTimer: 0,
       alive: true,
@@ -230,6 +243,24 @@ export function createWorld(rng) {
         x: rng.range(0, FIELD.width),
         y: rng.range(0, FIELD.height),
         z: rng.range(0.25, 1),
+        phase: rng.range(0, Math.PI * 2),
+      });
+    }
+    state.farStars = [];
+    for (let i = 0; i < 90; i += 1) {
+      state.farStars.push({
+        x: rng.range(0, FIELD.width),
+        y: rng.range(0, FIELD.height),
+        z: rng.range(0.06, 0.3),
+        phase: rng.range(0, Math.PI * 2),
+      });
+    }
+    state.dust = [];
+    for (let i = 0; i < 46; i += 1) {
+      state.dust.push({
+        x: rng.range(0, FIELD.width),
+        y: rng.range(0, FIELD.height),
+        drift: rng.range(2, 7),
         phase: rng.range(0, Math.PI * 2),
       });
     }
@@ -255,6 +286,7 @@ export function createWorld(rng) {
     const hpBonus = kind === 'chaser' || kind === 'weaver' ? Math.floor((state.wave - 1) / 5) : 0;
     const hp = kind === 'dreadnought' ? BOSS.hpBase + state.wave * BOSS.hpPerWave : spec.hp + hpBonus;
     state.enemies.push({
+      id: state.nextEnemyId++,
       kind,
       x: point.x,
       y: point.y,
@@ -275,12 +307,14 @@ export function createWorld(rng) {
       radialTimer: BOSS.radialEvery * 0.6,
       aimedTimer: BOSS.aimedEvery,
       escortTimer: BOSS.spawnEvery,
+      shotTimer: rng.range(0.9, ORBITER.shootEvery),
     });
   }
 
   function killEnemy(enemy, events) {
     const spec = ENEMIES[enemy.kind];
     if (enemy.kind === 'dreadnought') {
+      flash(enemy.x, enemy.y, '#ffffff', 64);
       // The capital ship dies in stages of light: layered bursts, twin
       // shockwaves and a shake the whole arena feels.
       burst(enemy.x, enemy.y, COLORS.dreadnought, 46, 380, 4.5);
@@ -297,6 +331,7 @@ export function createWorld(rng) {
         state.pickups.push({ kind: 'overdrive', x: enemy.x + 26, y: enemy.y, vx: 36, vy: -12, age: 0, life: PICKUPS.lifeSeconds });
       }
     } else {
+      flash(enemy.x, enemy.y, COLORS[enemy.kind], enemy.radius * 1.15);
       burst(enemy.x, enemy.y, COLORS[enemy.kind], enemy.kind === 'bulwark' ? 30 : 16, 300, enemy.kind === 'bulwark' ? 4 : 3);
       if (enemy.kind === 'bulwark') ring(enemy.x, enemy.y, COLORS.bulwark, 95);
       state.shake = Math.min(16, state.shake + (enemy.kind === 'bulwark' ? 7 : 2.5));
@@ -328,6 +363,7 @@ export function createWorld(rng) {
   function spawnEnemyNear(kind, x, y) {
     const spec = ENEMIES[kind];
     state.enemies.push({
+      id: state.nextEnemyId++,
       kind,
       x: clamp(x, 24, FIELD.width - 24),
       y: clamp(y, 24, FIELD.height - 24),
@@ -348,6 +384,7 @@ export function createWorld(rng) {
       radialTimer: 0,
       aimedTimer: 0,
       escortTimer: 0,
+      shotTimer: 1.2,
     });
   }
 
@@ -421,15 +458,51 @@ export function createWorld(rng) {
     }
     if (control.firing && player.fireTimer <= 0) {
       player.fireTimer = player.overdriveTimer > 0 ? PLAYER.overdriveInterval : PLAYER.fireInterval;
+      player.shotCounter += 1;
       const noseX = player.x + Math.cos(player.angle) * (PLAYER.radius + 6);
       const noseY = player.y + Math.sin(player.angle) * (PLAYER.radius + 6);
-      state.bullets.push({
-        x: noseX,
-        y: noseY,
-        vx: Math.cos(player.angle) * PLAYER.bulletSpeed + player.vx * 0.25,
-        vy: Math.sin(player.angle) * PLAYER.bulletSpeed + player.vy * 0.25,
-        life: PLAYER.bulletLife,
-      });
+      // The tri-spread cannon: a centre bolt and two angled pellets, so a
+      // volley paints a fan of cyan and amber across the arena.
+      for (const [offset, kind] of [[-WEAPONS.spreadAngle, 'spread'], [0, 'blaster'], [WEAPONS.spreadAngle, 'spread']]) {
+        const a = player.angle + offset;
+        const speed = kind === 'spread' ? WEAPONS.spreadSpeed : PLAYER.bulletSpeed;
+        state.bullets.push({
+          id: state.nextBulletId++,
+          kind,
+          pierce: 0,
+          hitIds: null,
+          x: noseX,
+          y: noseY,
+          vx: Math.cos(a) * speed + player.vx * 0.25,
+          vy: Math.sin(a) * speed + player.vy * 0.25,
+          life: PLAYER.bulletLife,
+        });
+      }
+      // Every fourth volley the lance fires too: one long violet beam that
+      // pierces a line of hulls instead of dying on the first.
+      if (player.shotCounter % WEAPONS.laserEvery === 0) {
+        state.bullets.push({
+          id: state.nextBulletId++,
+          kind: 'laser',
+          pierce: WEAPONS.laserPierce,
+          hitIds: new Set(),
+          x: noseX,
+          y: noseY,
+          vx: Math.cos(player.angle) * WEAPONS.laserSpeed + player.vx * 0.25,
+          vy: Math.sin(player.angle) * WEAPONS.laserSpeed + player.vy * 0.25,
+          life: WEAPONS.laserLife,
+        });
+      }
+      // Muzzle flash: two short-lived sparks at the nose.
+      for (let i = 0; i < 2; i += 1) {
+        state.particles.push({
+          x: noseX, y: noseY,
+          vx: Math.cos(player.angle) * 120 + rng.range(-40, 40),
+          vy: Math.sin(player.angle) * 120 + rng.range(-40, 40),
+          life: 0.12, maxLife: 0.12, size: rng.range(1.4, 2.6),
+          color: COLORS.bullet, drag: 2, kind: 'dot', grow: 0,
+        });
+      }
       state.shake = Math.min(16, state.shake + 0.35);
       events |= EV_SHOT;
     }
@@ -437,12 +510,12 @@ export function createWorld(rng) {
   }
 
   /** One hostile orb from a dreadnought gun, on a straight fixed course. */
-  function fireEnemyBullet(x, y, angle) {
+  function fireEnemyBullet(x, y, angle, speed = BOSS.bulletSpeed) {
     state.enemyBullets.push({
       x,
       y,
-      vx: Math.cos(angle) * BOSS.bulletSpeed,
-      vy: Math.sin(angle) * BOSS.bulletSpeed,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
       life: BOSS.bulletLife,
     });
   }
@@ -511,6 +584,22 @@ export function createWorld(rng) {
         enemy.vx = ux * spec.speed * speedScale;
         enemy.vy = uy * spec.speed * speedScale;
         enemy.angle += dt * 0.5;
+      } else if (enemy.kind === 'orbiter') {
+        // orbiter: a gun-skiff that holds orbit distance, strafes sideways
+        // around the player (direction fixed by its seeded phase) and fires
+        // a single aimed orb on a steady clock.
+        const orbitDir = enemy.phase > Math.PI ? 1 : -1;
+        const radialPush = clamp((dist - ORBITER.orbitDistance) / 120, -1, 1);
+        enemy.vx = (-uy * orbitDir + ux * radialPush * 0.8) * spec.speed * speedScale;
+        enemy.vy = (ux * orbitDir + uy * radialPush * 0.8) * spec.speed * speedScale;
+        enemy.angle += dt * 2.4;
+        if (player.alive) {
+          enemy.shotTimer -= dt;
+          if (enemy.shotTimer <= 0) {
+            enemy.shotTimer = ORBITER.shootEvery;
+            fireEnemyBullet(enemy.x, enemy.y, Math.atan2(dy, dx), ORBITER.bulletSpeed);
+          }
+        }
       } else {
         // dreadnought: it does not chase. It takes a slow orbit of the arena
         // centre, turns its guns on the player, and keeps the sky busy.
@@ -586,8 +675,15 @@ export function createWorld(rng) {
       if (bullet.life <= 0) continue;
       for (const enemy of state.enemies) {
         if (enemy.hp <= 0 || enemy.warp > 0) continue;
+        if (bullet.kind === 'laser' && bullet.hitIds.has(enemy.id)) continue;
         if (Math.hypot(bullet.x - enemy.x, bullet.y - enemy.y) < enemy.radius + PLAYER.bulletRadius) {
-          bullet.life = 0;
+          if (bullet.kind === 'laser') {
+            bullet.hitIds.add(enemy.id);
+            bullet.pierce -= 1;
+            if (bullet.pierce < 0) bullet.life = 0;
+          } else {
+            bullet.life = 0;
+          }
           enemy.hp -= 1;
           enemy.flash = 1;
           if (enemy.kind !== 'dreadnought') {
@@ -677,6 +773,17 @@ export function createWorld(rng) {
     for (const star of state.stars) {
       star.x -= star.z * 5 * dt;
       if (star.x < -2) star.x = FIELD.width + 2;
+    }
+    // The far parallax layer crawls; the dust motes drift on their own seeded
+    // headings, so the sky has three depths moving at three speeds.
+    for (const star of state.farStars) {
+      star.x -= star.z * 5 * dt;
+      if (star.x < -2) star.x = FIELD.width + 2;
+    }
+    for (const mote of state.dust) {
+      mote.x -= mote.drift * dt;
+      mote.y += Math.sin(state.time * 0.3 + mote.phase) * 2.2 * dt;
+      if (mote.x < -2) mote.x = FIELD.width + 2;
     }
     if (!state.over) {
       // Wave flow: spawn from the queue, or breathe between waves.

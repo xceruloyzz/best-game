@@ -23,6 +23,9 @@ export const COLORS = {
   dasher: '#ffd24d',
   bulwark: '#ff8a3d',
   dreadnought: '#59ff6b',
+  orbiter: '#2effc8',
+  spread: '#ffb84d',
+  laser: '#e879ff',
   enemyBullet: '#ff6ef5',
   repair: '#ff5d8f',
   overdrive: '#ffe74d',
@@ -52,6 +55,28 @@ export const ENEMIES = {
   dasher: { radius: 13, hp: 3, speed: 92, score: 200, cost: 3 },
   bulwark: { radius: 27, hp: 11, speed: 44, score: 400, cost: 6 },
   dreadnought: { radius: 46, hp: 60, speed: 30, score: 2500, cost: 16 },
+  orbiter: { radius: 13, hp: 3, speed: 126, score: 250, cost: 3 },
+};
+
+/**
+ * The player's arsenal, all of it live on every volley: a tri-spread cannon
+ * (a centre bolt flanked by two angled spread pellets) and, every fourth
+ * volley, a piercing laser lance that punches through a line of hulls.
+ */
+export const WEAPONS = {
+  spreadAngle: 0.16,
+  spreadSpeed: 715,
+  laserEvery: 4,
+  laserSpeed: 985,
+  laserLife: 0.8,
+  laserPierce: 4,
+};
+
+/** The orbiter: a strafing gun-skiff that holds its distance and shoots. */
+export const ORBITER = {
+  orbitDistance: 268,
+  bulletSpeed: 248,
+  shootEvery: 2.3,
 };
 
 /**

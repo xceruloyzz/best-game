@@ -119,8 +119,14 @@ export function stageShot(name, world) {
     playUntil(
       world,
       STRONG_PILOT,
-      (state) => (state.time > 14 && state.enemies.length >= 6 && state.bullets.length >= 3) || state.over,
-      50,
+      (state) =>
+        (state.time > 14 &&
+          state.enemies.length >= 5 &&
+          state.bullets.some((bullet) => bullet.kind === 'spread') &&
+          state.bullets.some((bullet) => bullet.kind === 'laser') &&
+          (state.enemies.some((enemy) => enemy.kind === 'orbiter') || state.time > 30)) ||
+        state.over,
+      55,
     );
     return { screen: SCREEN_PLAY, best: 0, newBest: false };
   }

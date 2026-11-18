@@ -112,6 +112,35 @@ export function createRenderer(canvas) {
       ctx.lineTo(FIELD.width, y);
     }
     ctx.stroke();
+    // Grid pulse nodes: the intersections breathe in a slow travelling wave.
+    for (let gx = 0; gx <= FIELD.width; gx += 160) {
+      for (let gy = 0; gy <= FIELD.height; gy += 160) {
+        const pulse = 0.5 + 0.5 * Math.sin(state.time * 1.3 - (gx + gy) * 0.004);
+        ctx.globalAlpha = 0.05 + pulse * 0.13;
+        ctx.fillStyle = '#7fd8ff';
+        ctx.beginPath();
+        ctx.arc(gx, gy, 1.6 + pulse * 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+    // The far parallax layer: tiny dim stars behind everything, crawling.
+    for (const star of state.farStars) {
+      const twinkle = 0.5 + 0.5 * Math.sin(state.time * 0.9 + star.phase);
+      ctx.globalAlpha = 0.12 + star.z * twinkle * 0.5;
+      ctx.fillStyle = '#9fd0e8';
+      ctx.fillRect(star.x, star.y, 1.3, 1.3);
+    }
+    ctx.globalAlpha = 1;
+    // Dust motes: soft motes drifting between the star layers.
+    for (const mote of state.dust) {
+      ctx.globalAlpha = 0.10 + 0.06 * Math.sin(state.time * 0.7 + mote.phase);
+      ctx.fillStyle = '#cfeaff';
+      ctx.beginPath();
+      ctx.arc(mote.x, mote.y, 2.1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
     // Stars drift slowly toward the player side; twinkle is a clock function.
     for (const star of state.stars) {
       const twinkle = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(state.time * 1.7 + star.phase));
@@ -293,6 +322,36 @@ export function createRenderer(canvas) {
       ctx.arc(0, 0, corePulse, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
+    } else if (enemy.kind === 'orbiter') {
+      // orbiter: a spiky gun-skiff inside a broken orbit ring, three
+      // satellite blisters circling it the other way, mint on the dark.
+      ctx.shadowBlur = 17;
+      ctx.setLineDash([7, 6]);
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = 0.6;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(0, 0, enemy.radius + 7, enemy.angle * 0.8, enemy.angle * 0.8 + Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      polygon(ctx, 0, 0, enemy.radius, 8, enemy.angle);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#03251c';
+      polygon(ctx, 0, 0, enemy.radius * 0.58, 8, -enemy.angle * 1.6);
+      ctx.fill();
+      for (let i = 0; i < 3; i += 1) {
+        const a = -enemy.angle * 1.6 + (i / 3) * Math.PI * 2;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(Math.cos(a) * enemy.radius * 0.82, Math.sin(a) * enemy.radius * 0.82, 3.1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = flash ? '#ffffff' : '#eafffa';
+      ctx.beginPath();
+      ctx.arc(0, 0, 3.6, 0, Math.PI * 2);
+      ctx.fill();
     } else {
       // bulwark: a heavy rotating hexagon with a bright core and a hull ring.
       polygon(ctx, 0, 0, enemy.radius, 6, enemy.angle);
@@ -309,7 +368,7 @@ export function createRenderer(canvas) {
     }
     ctx.restore();
     // A hull sliver for the kinds tough enough to need one.
-    if (enemy.hp < enemy.maxHp && (enemy.kind === 'bulwark' || enemy.kind === 'dasher' || enemy.kind === 'dreadnought')) {
+    if (enemy.hp < enemy.maxHp && (enemy.kind === 'bulwark' || enemy.kind === 'dasher' || enemy.kind === 'dreadnought' || enemy.kind === 'orbiter')) {
       const w = enemy.radius * 2;
       ctx.fillStyle = 'rgba(255,255,255,0.22)';
       ctx.fillRect(enemy.x - enemy.radius, enemy.y - enemy.radius - 11, w, 3.5);
@@ -413,23 +472,68 @@ export function createRenderer(canvas) {
       ctx.fill();
     }
     for (const bullet of state.bullets) {
-      ctx.strokeStyle = 'rgba(120, 230, 255, 0.45)';
-      ctx.lineWidth = 2.4;
-      ctx.beginPath();
-      ctx.moveTo(bullet.x - bullet.vx * 0.016, bullet.y - bullet.vy * 0.016);
-      ctx.lineTo(bullet.x, bullet.y);
-      ctx.stroke();
-      ctx.fillStyle = COLORS.bullet;
-      ctx.shadowColor = COLORS.bullet;
-      ctx.shadowBlur = 9;
-      ctx.beginPath();
-      ctx.arc(bullet.x, bullet.y, PLAYER.bulletRadius, 0, Math.PI * 2);
-      ctx.fill();
+      if (bullet.kind === 'laser') {
+        // The piercing lance: a long violet beam with a white core.
+        ctx.strokeStyle = 'rgba(232, 121, 255, 0.5)';
+        ctx.lineWidth = 7;
+        ctx.beginPath();
+        ctx.moveTo(bullet.x - bullet.vx * 0.085, bullet.y - bullet.vy * 0.085);
+        ctx.lineTo(bullet.x, bullet.y);
+        ctx.stroke();
+        ctx.strokeStyle = '#fdf4ff';
+        ctx.lineWidth = 2.4;
+        ctx.beginPath();
+        ctx.moveTo(bullet.x - bullet.vx * 0.085, bullet.y - bullet.vy * 0.085);
+        ctx.lineTo(bullet.x, bullet.y);
+        ctx.stroke();
+        ctx.fillStyle = COLORS.laser;
+        ctx.shadowColor = COLORS.laser;
+        ctx.shadowBlur = 16;
+        ctx.beginPath();
+        ctx.arc(bullet.x, bullet.y, 4.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      } else if (bullet.kind === 'spread') {
+        // Spread pellets burn amber, shorter and hotter than the centre bolt.
+        ctx.strokeStyle = 'rgba(255, 184, 77, 0.5)';
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.moveTo(bullet.x - bullet.vx * 0.014, bullet.y - bullet.vy * 0.014);
+        ctx.lineTo(bullet.x, bullet.y);
+        ctx.stroke();
+        ctx.fillStyle = COLORS.spread;
+        ctx.shadowColor = COLORS.spread;
+        ctx.shadowBlur = 9;
+        ctx.beginPath();
+        ctx.arc(bullet.x, bullet.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      } else {
+        ctx.strokeStyle = 'rgba(120, 230, 255, 0.45)';
+        ctx.lineWidth = 2.4;
+        ctx.beginPath();
+        ctx.moveTo(bullet.x - bullet.vx * 0.016, bullet.y - bullet.vy * 0.016);
+        ctx.lineTo(bullet.x, bullet.y);
+        ctx.stroke();
+        ctx.fillStyle = COLORS.bullet;
+        ctx.shadowColor = COLORS.bullet;
+        ctx.shadowBlur = 9;
+        ctx.beginPath();
+        ctx.arc(bullet.x, bullet.y, PLAYER.bulletRadius, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
     ctx.shadowBlur = 0;
     for (const particle of state.particles) {
       const t = particle.life / particle.maxLife;
-      if (particle.kind === 'ring') {
+      if (particle.kind === 'flash') {
+        // An explosion's first instant: a disc that swells as it fades.
+        ctx.globalAlpha = t * 0.8;
+        ctx.fillStyle = particle.color;
+        ctx.beginPath();
+        ctx.arc(particle.x, particle.y, particle.size * (1.6 - t * 0.6), 0, Math.PI * 2);
+        ctx.fill();
+      } else if (particle.kind === 'ring') {
         // A shockwave: born at a point, gone at full stretch.
         ctx.globalAlpha = t * 0.85;
         ctx.strokeStyle = particle.color;
@@ -545,6 +649,13 @@ export function createRenderer(canvas) {
       ctx.fillStyle = COLORS.dreadnought;
       ctx.fillRect(barX, 42, barWidth * Math.max(0, boss.hp / boss.maxHp), 7);
     }
+    // The arsenal, named so a glance shows both guns are live.
+    ctx.textAlign = 'center';
+    ctx.globalAlpha = 0.62;
+    ctx.fillStyle = COLORS.spread;
+    ctx.font = '700 12.5px system-ui, "Segoe UI", sans-serif';
+    ctx.fillText('ARSENAL — TRI-SPREAD CANNON  ·  PIERCING LASER EVERY 4TH VOLLEY', FIELD.width / 2, FIELD.height - 34);
+    ctx.globalAlpha = 1;
     // Controls, a whisper at the bottom.
     ctx.textAlign = 'center';
     ctx.globalAlpha = 0.5;
@@ -587,7 +698,7 @@ export function createRenderer(canvas) {
     ctx.restore();
   }
 
-  /** The five hunter kinds, standing in a row on the title screen as a warning. */
+  /** The six hunter kinds, standing in a row on the title screen as a warning. */
   function drawShowcase(state) {
     ctx.save();
     ctx.translate(view.ox, view.oy);
@@ -597,18 +708,20 @@ export function createRenderer(canvas) {
       ['weaver', 'WEAVER'],
       ['dasher', 'DASHER'],
       ['bulwark', 'BULWARK'],
+      ['orbiter', 'ORBITER'],
       ['dreadnought', 'DREADNOUGHT'],
     ];
     kinds.forEach(([kind, label], i) => {
       const fake = {
+        id: 0,
         kind,
-        x: 232 + i * 204,
+        x: 148 + i * 197,
         y: 664,
         vx: 0,
         vy: 0,
         hp: 1,
         maxHp: 1,
-        radius: kind === 'dreadnought' ? 40 : kind === 'bulwark' ? 27 : 15,
+        radius: kind === 'dreadnought' ? 36 : kind === 'bulwark' ? 27 : 15,
         age: 0,
         warp: 0,
         flash: 0,
@@ -618,6 +731,7 @@ export function createRenderer(canvas) {
         dashX: 0,
         dashY: 0,
         angle: state.time * 0.6 + i,
+        shotTimer: 9,
       };
       drawEnemy(fake, state);
       ctx.textAlign = 'center';
@@ -650,8 +764,9 @@ export function createRenderer(canvas) {
     ctx.restore();
     centred('NEON VOID', 268, '900 104px system-ui, "Segoe UI", sans-serif', COLORS.player, 36);
     centred('A R E N A   S U R V I V A L', 312, '600 21px system-ui, "Segoe UI", sans-serif', COLORS.text);
-    centred('Five kinds of hunter are coming through the dark. Chain your kills, raise the combo,', 386, '500 17px system-ui, "Segoe UI", sans-serif', COLORS.dim);
+    centred('Six kinds of hunter are coming through the dark. Chain your kills, raise the combo,', 386, '500 17px system-ui, "Segoe UI", sans-serif', COLORS.dim);
     centred('mind the Dreadnought every fifth wave, and do not let them touch your hull.', 410, '500 17px system-ui, "Segoe UI", sans-serif', COLORS.dim);
+    centred('YOUR GUNS — TRI-SPREAD CANNON  ·  PIERCING LASER LANCE', 436, '700 14.5px system-ui, "Segoe UI", sans-serif', COLORS.laser);
     centred('WASD / ARROWS — move        MOUSE — aim        HOLD CLICK / SPACE — fire', 462, '700 16px system-ui, "Segoe UI", sans-serif', COLORS.text);
     centred('P — pause        M — sound on/off', 488, '500 14px system-ui, "Segoe UI", sans-serif', COLORS.dim);
     if (best > 0) centred(`BEST  ${formatScore(best)}`, 540, '800 20px system-ui, "Segoe UI", sans-serif', COLORS.overdrive);
